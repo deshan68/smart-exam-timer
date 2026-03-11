@@ -16,22 +16,24 @@ interface ExamPart {
 }
 
 // ── Audio helpers ─────────────────────────────────────────────────────────────
-function createBellSound(
-  ctx: AudioContext,
-  frequency: number = 880,
-  duration: number = 1.5,
-  vol: number = 0.6,
-): void {
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.frequency.setValueAtTime(frequency, ctx.currentTime);
-  osc.type = "sine";
-  gain.gain.setValueAtTime(vol, ctx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-  osc.start(ctx.currentTime);
-  osc.stop(ctx.currentTime + duration);
+// Single unified bell tone — a clean 880 Hz sine with a natural decay.
+// BellType only controls how many times it rings:
+//   sub  → 1 ring
+//   part → 2 rings
+//   end  → 3 rings
+function ringOnce(ctx: AudioContext, vol: number, delayMs: number = 0): void {
+  setTimeout(() => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    gain.gain.setValueAtTime(vol, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.6);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 1.6);
+  }, delayMs);
 }
 
 function playBell(
@@ -40,20 +42,22 @@ function playBell(
   vol: number = 0.6,
 ): void {
   if (!ctx) return;
+  const GAP = 550; // ms between rings
   if (type === "sub") {
-    createBellSound(ctx, 660, 0.8, vol * 0.7);
-  } else if (type === "end") {
-    [0, 0.4, 0.8].forEach((delay) => {
-      setTimeout(() => createBellSound(ctx, 523, 1.2, vol), delay * 1000);
-    });
+    ringOnce(ctx, vol);
+  } else if (type === "part") {
+    ringOnce(ctx, vol, 0);
+    ringOnce(ctx, vol, GAP);
   } else {
-    createBellSound(ctx, 880, 1.5, vol);
-    setTimeout(() => createBellSound(ctx, 660, 1.0, vol * 0.7), 400);
+    // end
+    ringOnce(ctx, vol, 0);
+    ringOnce(ctx, vol, GAP);
+    ringOnce(ctx, vol, GAP * 2);
   }
 }
 
 function playVolumePreview(ctx: AudioContext, vol: number): void {
-  createBellSound(ctx, 880, 0.5, vol);
+  ringOnce(ctx, vol);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -67,6 +71,12 @@ function formatTime(totalSecs: number): string {
   const s = totalSecs % 60;
   if (h > 0) return `${pad(h)}:${pad(m)}:${pad(s)}`;
   return `${pad(m)}:${pad(s)}`;
+}
+
+function ordinal(n: number): string {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]);
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -115,6 +125,126 @@ const THEME = {
   },
 } as const;
 
+// ── Sub-components ────────────────────────────────────────────────────────────
+type ThemeObj = (typeof THEME)[keyof typeof THEME];
+
+function SectionTitle({ label, T }: { label: string; T: ThemeObj }) {
+  return (
+    <div
+      style={{
+        fontSize: "0.6rem",
+        letterSpacing: "0.3em",
+        color: T.accent,
+        textTransform: "uppercase",
+        marginBottom: "0.75rem",
+        borderBottom: `1px solid ${T.border}`,
+        paddingBottom: "0.4rem",
+      }}
+    >
+      {label}
+    </div>
+  );
+}
+
+function FieldLabel({
+  label,
+  T,
+  children,
+}: {
+  label: string;
+  T: ThemeObj;
+  children: React.ReactNode;
+}) {
+  return (
+    <label
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.3rem",
+        fontSize: "0.6rem",
+        letterSpacing: "0.15em",
+        color: T.textMid,
+        textTransform: "uppercase",
+      }}
+    >
+      {label}
+      {children}
+    </label>
+  );
+}
+
+function VolumeRow({
+  volume,
+  onVolumeChange,
+  T,
+}: {
+  volume: number;
+  onVolumeChange: (v: number) => void;
+  T: ThemeObj;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "1rem",
+        marginBottom: "0.5rem",
+      }}
+    >
+      <span style={{ color: T.textDim, fontSize: "1rem" }}>🔈</span>
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.05}
+        value={volume}
+        onChange={(e) => onVolumeChange(Number(e.target.value))}
+        style={{ flex: 1, accentColor: T.accent }}
+      />
+      <span style={{ color: T.textDim, fontSize: "1rem" }}>🔊</span>
+      <span
+        style={{
+          minWidth: "2.5rem",
+          fontSize: "0.7rem",
+          color: T.textMid,
+          textAlign: "right",
+          letterSpacing: "0.05em",
+        }}
+      >
+        {Math.round(volume * 100)}%
+      </span>
+    </div>
+  );
+}
+
+function inputSty(T: ThemeObj): React.CSSProperties {
+  return {
+    background: T.inputBg,
+    border: `1px solid ${T.borderMid}`,
+    borderRadius: 4,
+    color: T.text,
+    padding: "0.4rem 0.6rem",
+    fontSize: "0.85rem",
+    fontFamily: "'Courier New', monospace",
+    outline: "none",
+    width: "100%",
+    transition: "background 0.3s, color 0.3s",
+  };
+}
+
+function iconBtn(T: ThemeObj): React.CSSProperties {
+  return {
+    background: "none",
+    border: `1px solid ${T.borderMid}`,
+    color: T.textMid,
+    padding: "0.3rem 0.6rem",
+    cursor: "pointer",
+    borderRadius: 4,
+    fontFamily: "'Courier New', monospace",
+    fontSize: "0.85rem",
+  };
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function ExamTimerV2() {
   const [phase, setPhase] = useState<Phase>("setup");
@@ -125,6 +255,8 @@ export default function ExamTimerV2() {
   const [currentPartIdx, setCurrentPartIdx] = useState<number>(0);
   const [secsLeft, setSecsLeft] = useState<number>(0);
   const [nextSubAt, setNextSubAt] = useState<number>(0);
+  const [currentSubNum, setCurrentSubNum] = useState<number>(1); // which interval we're in
+  const [totalSubCount, setTotalSubCount] = useState<number>(0); // total intervals in part
   const [paused, setPaused] = useState<boolean>(false);
   const [volume, setVolume] = useState<number>(0.6);
   const [theme, setTheme] = useState<ThemeMode>("dark");
@@ -138,6 +270,7 @@ export default function ExamTimerV2() {
   const lastTickRef = useRef<number>(0);
   const secsRef = useRef<number>(0);
   const subRef = useRef<number>(0);
+  const subNumRef = useRef<number>(1);
   const partIdxRef = useRef<number>(0);
   const partsRef = useRef<ExamPart[]>(parts);
   const pausedRef = useRef<boolean>(false);
@@ -167,7 +300,6 @@ export default function ExamTimerV2() {
     return audioCtxRef.current;
   }, []);
 
-  // Play a short preview bell when volume slider changes (debounced)
   const handleVolumeChange = (val: number) => {
     setVolume(val);
     if (volumePreviewTimeout.current)
@@ -175,6 +307,12 @@ export default function ExamTimerV2() {
     volumePreviewTimeout.current = setTimeout(() => {
       playVolumePreview(getAudioCtx(), val);
     }, 300);
+  };
+
+  // Helper: compute total sub-interval count for a part
+  const calcTotalSubs = (part: ExamPart): number => {
+    if (!part.subEnabled || part.subInterval <= 0) return 0;
+    return Math.floor(part.duration / part.subInterval);
   };
 
   const endExam = useCallback(() => {
@@ -201,7 +339,10 @@ export default function ExamTimerV2() {
       const sub =
         part.subEnabled && part.subInterval > 0 ? part.subInterval * 60 : 0;
       subRef.current = sub > 0 ? secs - sub : 0;
+      subNumRef.current = 1;
       setNextSubAt(subRef.current);
+      setCurrentSubNum(1);
+      setTotalSubCount(calcTotalSubs(part));
       playBell(getAudioCtx(), "part", volumeRef.current);
     },
     [endExam, getAudioCtx],
@@ -215,13 +356,17 @@ export default function ExamTimerV2() {
     partIdxRef.current = 0;
     setCurrentPartIdx(0);
     const ps = partsRef.current;
-    const secs = ps[0].duration * 60;
+    const part = ps[0];
+    const secs = part.duration * 60;
     secsRef.current = secs;
     setSecsLeft(secs);
     const sub =
-      ps[0].subEnabled && ps[0].subInterval > 0 ? ps[0].subInterval * 60 : 0;
+      part.subEnabled && part.subInterval > 0 ? part.subInterval * 60 : 0;
     subRef.current = sub > 0 ? secs - sub : 0;
+    subNumRef.current = 1;
     setNextSubAt(subRef.current);
+    setCurrentSubNum(1);
+    setTotalSubCount(calcTotalSubs(part));
     lastTickRef.current = performance.now();
 
     tickRef.current = setInterval(() => {
@@ -238,7 +383,9 @@ export default function ExamTimerV2() {
           partsRef.current[partIdxRef.current].subInterval * 60;
         subRef.current -= subInterval;
         if (subRef.current < 0) subRef.current = 0;
+        subNumRef.current += 1;
         setNextSubAt(subRef.current);
+        setCurrentSubNum(subNumRef.current);
       }
 
       if (secsRef.current <= 0) {
@@ -338,7 +485,6 @@ export default function ExamTimerV2() {
         gap: "1rem",
       }}
     >
-      {/* Marketing message */}
       <div
         style={{
           flex: 1,
@@ -355,8 +501,6 @@ export default function ExamTimerV2() {
       >
         {brandingMsg || "\u00A0"}
       </div>
-
-      {/* Developer credit */}
       <a
         href="https://github.com/deshan68"
         target="_blank"
@@ -480,7 +624,6 @@ export default function ExamTimerV2() {
           overflow: "hidden",
         }}
       >
-        {/* Scanline overlay (dark only) */}
         {theme === "dark" && (
           <div
             style={{
@@ -656,9 +799,56 @@ export default function ExamTimerV2() {
             />
           </div>
 
-          {/* Sub-timer */}
+          {/* Sub-interval display */}
           {showSub && (
             <div style={{ marginTop: "2rem", textAlign: "center" }}>
+              {/* Interval badge */}
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  background: `${T.accent}18`,
+                  border: `1px solid ${T.accent}55`,
+                  borderRadius: 4,
+                  padding: "0.3rem 0.85rem",
+                  marginBottom: "0.6rem",
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: "0.6rem",
+                    letterSpacing: "0.2em",
+                    color: T.accent,
+                    textTransform: "uppercase",
+                  }}
+                >
+                  INTERVAL
+                </span>
+                <span
+                  style={{
+                    fontSize: "0.95rem",
+                    fontWeight: 900,
+                    color: T.accent,
+                    letterSpacing: "0.05em",
+                  }}
+                >
+                  {currentSubNum}
+                  {totalSubCount > 0 && (
+                    <span
+                      style={{
+                        fontWeight: 400,
+                        color: T.textMid,
+                        fontSize: "0.75rem",
+                      }}
+                    >
+                      {" "}
+                      / {totalSubCount}
+                    </span>
+                  )}
+                </span>
+              </div>
+
               <div
                 style={{
                   fontSize: "0.62rem",
@@ -667,7 +857,7 @@ export default function ExamTimerV2() {
                   marginBottom: "0.3rem",
                 }}
               >
-                NEXT INTERVAL BELL
+                NEXT BELL IN
               </div>
               <div
                 style={{
@@ -787,7 +977,6 @@ export default function ExamTimerV2() {
         transition: "background 0.3s, color 0.3s",
       }}
     >
-      {/* Top bar */}
       <div
         style={{
           display: "flex",
@@ -801,7 +990,6 @@ export default function ExamTimerV2() {
       </div>
 
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "2rem" }}>
-        {/* Logo */}
         <div style={{ textAlign: "center", marginBottom: "3rem" }}>
           <div
             style={{
@@ -825,7 +1013,6 @@ export default function ExamTimerV2() {
           </div>
         </div>
 
-        {/* Exam structure */}
         <SectionTitle label="EXAM STRUCTURE" T={T} />
         <div
           style={{
@@ -956,7 +1143,6 @@ export default function ExamTimerV2() {
           + Add Part
         </button>
 
-        {/* Branding */}
         <SectionTitle label="MARKETING BANNER" T={T} />
         <input
           value={brandingMsg}
@@ -965,11 +1151,9 @@ export default function ExamTimerV2() {
           style={{ ...inputSty(T), width: "100%", marginBottom: "2rem" }}
         />
 
-        {/* Volume */}
         <SectionTitle label="BELL VOLUME" T={T} />
         <VolumeRow volume={volume} onVolumeChange={handleVolumeChange} T={T} />
 
-        {/* Start */}
         <button
           onClick={startTimer}
           style={{
@@ -992,128 +1176,7 @@ export default function ExamTimerV2() {
         </button>
       </div>
 
-      {/* Fixed branding banner */}
       <BrandingBanner fixed />
     </div>
   );
-}
-
-// ── Sub-components ────────────────────────────────────────────────────────────
-type ThemeObj = (typeof THEME)[keyof typeof THEME];
-
-function SectionTitle({ label, T }: { label: string; T: ThemeObj }) {
-  return (
-    <div
-      style={{
-        fontSize: "0.6rem",
-        letterSpacing: "0.3em",
-        color: T.accent,
-        textTransform: "uppercase",
-        marginBottom: "0.75rem",
-        borderBottom: `1px solid ${T.border}`,
-        paddingBottom: "0.4rem",
-      }}
-    >
-      {label}
-    </div>
-  );
-}
-
-function FieldLabel({
-  label,
-  T,
-  children,
-}: {
-  label: string;
-  T: ThemeObj;
-  children: React.ReactNode;
-}) {
-  return (
-    <label
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: "0.3rem",
-        fontSize: "0.6rem",
-        letterSpacing: "0.15em",
-        color: T.textMid,
-        textTransform: "uppercase",
-      }}
-    >
-      {label}
-      {children}
-    </label>
-  );
-}
-
-function VolumeRow({
-  volume,
-  onVolumeChange,
-  T,
-}: {
-  volume: number;
-  onVolumeChange: (v: number) => void;
-  T: ThemeObj;
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "1rem",
-        marginBottom: "0.5rem",
-      }}
-    >
-      <span style={{ color: T.textDim, fontSize: "1rem" }}>🔈</span>
-      <input
-        type="range"
-        min={0}
-        max={1}
-        step={0.05}
-        value={volume}
-        onChange={(e) => onVolumeChange(Number(e.target.value))}
-        style={{ flex: 1, accentColor: T.accent }}
-      />
-      <span style={{ color: T.textDim, fontSize: "1rem" }}>🔊</span>
-      <span
-        style={{
-          minWidth: "2.5rem",
-          fontSize: "0.7rem",
-          color: T.textMid,
-          textAlign: "right",
-          letterSpacing: "0.05em",
-        }}
-      >
-        {Math.round(volume * 100)}%
-      </span>
-    </div>
-  );
-}
-
-function inputSty(T: ThemeObj): React.CSSProperties {
-  return {
-    background: T.inputBg,
-    border: `1px solid ${T.borderMid}`,
-    borderRadius: 4,
-    color: T.text,
-    padding: "0.4rem 0.6rem",
-    fontSize: "0.85rem",
-    fontFamily: "'Courier New', monospace",
-    outline: "none",
-    width: "100%",
-    transition: "background 0.3s, color 0.3s",
-  };
-}
-
-function iconBtn(T: ThemeObj): React.CSSProperties {
-  return {
-    background: "none",
-    border: `1px solid ${T.borderMid}`,
-    color: T.textMid,
-    padding: "0.3rem 0.6rem",
-    cursor: "pointer",
-    borderRadius: 4,
-    fontFamily: "'Courier New', monospace",
-    fontSize: "0.85rem",
-  };
 }
